@@ -1,0 +1,21 @@
+# Ignore node_modules to keep repository clean
+node_modules/
+
+# Ignore build artifacts
+client/build/
+dist/
+
+# Ignore editor/IDE directories and OS files
+.ipython/
+.vscode/
+.idea/
+__pycache__/
+.DS_Store
+
+# Ignore miscellaneous files unrelated to the project scaffolding
+answer.js
+create_montage.py
+placeholder_light_gray_block.png
+pptx_to_img.py
+slides_template.js
+*.log
