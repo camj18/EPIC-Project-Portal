@@ -1,0 +1,9 @@
+{
+  "name": "epic-client",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "start": "node start.js"
+  }
+}
