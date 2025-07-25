@@ -2,15 +2,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-// Define the port. Fall back to 3001 if no environment variable is set.
 const PORT = process.env.PORT || 3001;
 
-/**
- * Determine a MIME type based on file extension.
- * This simple mapping covers the asset types used in this project.
- * @param {string} ext File extension (without leading dot)
- * @returns {string} A valid HTTP Content‑Type header value
- */
 function getMimeType(ext) {
   const types = {
     html: 'text/html',
@@ -26,61 +19,37 @@ function getMimeType(ext) {
   return types[ext.toLowerCase()] || 'application/octet-stream';
 }
 
-/**
- * Resolve the path to a static file. The server first looks for
- * prebuilt assets in the `client/build` directory. If no build directory
- * exists (e.g. during initial scaffolding), it falls back to serving
- * the raw `client/index.html` file for all non‑API requests. This
- * allows developers to see a “Hello, EPIC Hub!” page without a full
- * React toolchain.
- * @param {string} url The URL path from the incoming request
- * @returns {string} Absolute path on disk to the file to serve
- */
 function resolveStaticPath(url) {
   const clientDir = path.join(__dirname, '..', 'client');
   const buildDir = path.join(clientDir, 'build');
   const buildExists = fs.existsSync(buildDir);
-
-  // Determine file name: if requesting the root, serve index.html
   const requestedPath = url === '/' ? 'index.html' : url.replace(/^\//, '');
-  // First look in build folder if it exists
   if (buildExists) {
     const fileInBuild = path.join(buildDir, requestedPath);
     if (fs.existsSync(fileInBuild) && fs.statSync(fileInBuild).isFile()) {
       return fileInBuild;
     }
   }
-  // Fallback to the raw client directory
   const fallbackFile = path.join(clientDir, requestedPath);
   if (fs.existsSync(fallbackFile) && fs.statSync(fallbackFile).isFile()) {
     return fallbackFile;
   }
-  // Default to the main HTML file
   return path.join(clientDir, 'index.html');
 }
 
-// -----------------------------------------------------------------------------
-// Simple in‑memory data store for projects and files. In a real application
-// these would reside in a database (e.g. PostgreSQL) and file uploads would
-// be stored in S3. For this scaffold we keep everything in memory and on
-// local disk to allow the API to be exercised without external services.
+// Data stores
+const tasksData = [];
+let nextTaskId = 1;
 const projects = [];
 const filesData = [];
 let nextProjectId = 1;
 let nextFileId = 1;
 
-// Ensure an uploads directory exists for storing file blobs.
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-/**
- * Helper to parse JSON bodies. Accumulates incoming data and attempts
- * to JSON.parse it. If parsing fails, it returns null.
- * @param {http.IncomingMessage} req Incoming request
- * @returns {Promise<null|any>} Parsed JSON object or null on error
- */
 function parseJsonBody(req) {
   return new Promise((resolve) => {
     let body = '';
@@ -98,27 +67,16 @@ function parseJsonBody(req) {
   });
 }
 
-/**
- * API handler. Receives the HTTP method and URL path and dispatches to
- * appropriate controller logic. All JSON responses include CORS headers
- * for ease of development. In production these should be restricted.
- * @param {http.IncomingMessage} req
- * @param {http.ServerResponse} res
- * @param {string} pathname
- */
 async function handleApi(req, res, pathname) {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  // Preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
-  // /api/health – mirror /health but under /api
   if (pathname === '/api/health' && req.method === 'GET') {
     const body = JSON.stringify({ status: 'OK' });
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -126,15 +84,12 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // GET /api/projects – list all projects
   if (pathname === '/api/projects' && req.method === 'GET') {
-    const body = JSON.stringify(projects);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(body);
+    res.end(JSON.stringify(projects));
     return;
   }
 
-  // POST /api/projects – create a new project { name }
   if (pathname === '/api/projects' && req.method === 'POST') {
     const data = await parseJsonBody(req);
     if (!data || typeof data.name !== 'string' || !data.name.trim()) {
@@ -149,11 +104,13 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // Regex helpers for project and file routes
+  // regex
   const projectFilesMatch = pathname.match(/^\/api\/projects\/(\d+)\/files$/);
   const fileMatch = pathname.match(/^\/api\/files\/(\d+)$/);
+  const projectTasksMatch = pathname.match(/^\/api\/projects\/(\d+)\/tasks$/);
+  const taskMatch = pathname.match(/^\/api\/tasks\/(\d+)$/);
 
-  // GET /api/projects/:id/files – list files for a project
+  // list files
   if (projectFilesMatch && req.method === 'GET') {
     const projectId = parseInt(projectFilesMatch[1], 10);
     const project = projects.find((p) => p.id === projectId);
@@ -168,7 +125,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // POST /api/projects/:id/files – upload a file (base64 encoded)
+  // create file
   if (projectFilesMatch && req.method === 'POST') {
     const projectId = parseInt(projectFilesMatch[1], 10);
     const project = projects.find((p) => p.id === projectId);
@@ -183,7 +140,6 @@ async function handleApi(req, res, pathname) {
       res.end(JSON.stringify({ error: 'Invalid file data' }));
       return;
     }
-    // Determine version: increment count for this filename on this project
     const existingFiles = filesData.filter((f) => f.project_id === projectId && f.filename === data.filename);
     const version = existingFiles.length + 1;
     const fileId = nextFileId++;
@@ -212,7 +168,94 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // GET /api/files/:fileId – download a file
+  // tasks endpoints
+  if (projectTasksMatch && req.method === 'GET') {
+    const projectId = parseInt(projectTasksMatch[1], 10);
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Project not found' }));
+      return;
+    }
+    const projectTasks = tasksData.filter((t) => t.project_id === projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(projectTasks));
+    return;
+  }
+
+  if (projectTasksMatch && req.method === 'POST') {
+    const projectId = parseInt(projectTasksMatch[1], 10);
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Project not found' }));
+      return;
+    }
+    const data = await parseJsonBody(req);
+    if (!data || typeof data.title !== 'string' || !data.title.trim()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid task data' }));
+      return;
+    }
+    const task = {
+      id: nextTaskId++,
+      project_id: projectId,
+      title: data.title.trim(),
+      description: data.description || '',
+      status: data.status || 'Backlog',
+      assignees: Array.isArray(data.assignees) ? data.assignees : [],
+      due_date: typeof data.due_date === 'string' ? data.due_date : null,
+      labels: Array.isArray(data.labels) ? data.labels : [],
+      created_at: new Date().toISOString()
+    };
+    tasksData.push(task);
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(task));
+    return;
+  }
+
+  if (taskMatch && req.method === 'PATCH') {
+    const taskId = parseInt(taskMatch[1], 10);
+    const index = tasksData.findIndex((t) => t.id === taskId);
+    if (index === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Task not found' }));
+      return;
+    }
+    const data = await parseJsonBody(req);
+    if (!data) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid task data' }));
+      return;
+    }
+    const task = tasksData[index];
+    if (typeof data.title === 'string') task.title = data.title.trim();
+    if (typeof data.description === 'string') task.description = data.description;
+    if (typeof data.status === 'string') task.status = data.status;
+    if (Array.isArray(data.assignees)) task.assignees = data.assignees;
+    if (typeof data.due_date === 'string' || data.due_date === null) task.due_date = data.due_date;
+    if (Array.isArray(data.labels)) task.labels = data.labels;
+    tasksData[index] = task;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(task));
+    return;
+  }
+
+  if (taskMatch && req.method === 'DELETE') {
+    const taskId = parseInt(taskMatch[1], 10);
+    const index = tasksData.findIndex((t) => t.id === taskId);
+    if (index === -1) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Task not found' }));
+      return;
+    }
+    tasksData.splice(index, 1);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // get file
   if (fileMatch && req.method === 'GET') {
     const fileId = parseInt(fileMatch[1], 10);
     const fileRecord = filesData.find((f) => f.id === fileId);
@@ -227,20 +270,16 @@ async function handleApi(req, res, pathname) {
       res.end(JSON.stringify({ error: 'File missing on disk' }));
       return;
     }
-    // Stream file with appropriate MIME type
     const ext = path.extname(fileRecord.filename).slice(1);
     const mime = getMimeType(ext);
     const stat = fs.statSync(filePath);
-    res.writeHead(200, {
-      'Content-Type': mime,
-      'Content-Length': stat.size
-    });
+    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': stat.size });
     const readStream = fs.createReadStream(filePath);
     readStream.pipe(res);
     return;
   }
 
-  // DELETE /api/files/:fileId – delete a file
+  // delete file
   if (fileMatch && req.method === 'DELETE') {
     const fileId = parseInt(fileMatch[1], 10);
     const index = filesData.findIndex((f) => f.id === fileId);
@@ -256,7 +295,6 @@ async function handleApi(req, res, pathname) {
       try {
         fs.unlinkSync(filePath);
       } catch (_) {
-        // ignore errors during file deletion
       }
     }
     res.writeHead(204);
@@ -264,39 +302,29 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
-  // If no route matched, return 404
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not Found' }));
 }
 
-// Create the HTTP server. It serves the health endpoint, API routes and static assets.
 const server = http.createServer(async (req, res) => {
-  // Normalize the URL to avoid directory traversal
   const url = new URL(req.url, `http://${req.headers.host}`).pathname;
 
-  // Route API requests beginning with /api
   if (url.startsWith('/api/')) {
     await handleApi(req, res, url);
     return;
   }
 
-  // Simple API endpoint for health check (non‑API path for legacy reasons)
   if (url === '/health') {
     const body = JSON.stringify({ status: 'OK' });
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body)
-    });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
     res.end(body);
     return;
   }
 
-  // Serve static files for all other GET requests
   if (req.method === 'GET') {
     const filePath = resolveStaticPath(url);
     fs.readFile(filePath, (err, content) => {
       if (err) {
-        // Unexpected error reading file
         res.writeHead(500);
         res.end('Internal Server Error');
         return;
@@ -308,7 +336,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // All other methods are not supported for non‑API routes
   res.writeHead(405);
   res.end('Method Not Allowed');
 });
