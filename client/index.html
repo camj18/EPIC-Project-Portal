@@ -1,26 +1,195 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EPIC Student Project Hub</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 2rem;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        background-color: #f5f5f5;
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EPIC Project Hub</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2em;
+      padding: 0;
+      background-color: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+    }
+    form {
+      margin-bottom: 1em;
+    }
+    #file-list li {
+      margin: 0.5em 0;
+      cursor: pointer;
+    }
+    button {
+      margin-left: 0.5em;
+    }
+    #preview img, #preview iframe {
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>EPIC Project Hub - File Manager</h1>
+
+  <section id="project-section">
+    <h2>Create Project</h2>
+    <form id="project-form">
+      <input type="text" id="project-name" placeholder="Project name" required />
+      <button type="submit">Create Project</button>
+    </form>
+    <label for="project-select">Select Project:</label>
+    <select id="project-select"></select>
+  </section>
+
+  <section id="file-section">
+    <h2>Files</h2>
+    <form id="file-form">
+      <input type="file" id="file-input" required />
+      <button type="submit">Upload</button>
+    </form>
+    <ul id="file-list"></ul>
+  </section>
+
+  <section id="preview-section">
+    <h2>Preview</h2>
+    <div id="preview"></div>
+  </section>
+
+  <script>
+    const projectForm = document.getElementById('project-form');
+    const projectNameInput = document.getElementById('project-name');
+    const projectSelect = document.getElementById('project-select');
+    const fileForm = document.getElementById('file-form');
+    const fileInput = document.getElementById('file-input');
+    const fileList = document.getElementById('file-list');
+    const previewDiv = document.getElementById('preview');
+
+    let currentProjectId = null;
+
+    function loadProjects() {
+      fetch('/api/projects')
+        .then(res => res.json())
+        .then(data => {
+          projectSelect.innerHTML = '';
+          data.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name;
+            projectSelect.appendChild(opt);
+          });
+          if (data.length > 0) {
+            currentProjectId = data[0].id;
+            projectSelect.value = currentProjectId;
+            loadFiles();
+          } else {
+            currentProjectId = null;
+          }
+        });
+    }
+
+    projectForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const name = projectNameInput.value.trim();
+      if (!name) return;
+      fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+      .then(res => res.json())
+      .then(() => {
+        projectNameInput.value = '';
+        loadProjects();
+      });
+    });
+
+    projectSelect.addEventListener('change', e => {
+      currentProjectId = e.target.value;
+      loadFiles();
+    });
+
+    fileForm.addEventListener('submit', e => {
+      e.preventDefault();
+      const file = fileInput.files[0];
+      if (!file || !currentProjectId) return;
+      const reader = new FileReader();
+      reader.onload = function() {
+        const base64 = reader.result.split(',')[1];
+        fetch(`/api/projects/${currentProjectId}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            file_type: file.type,
+            data: base64
+          })
+        })
+        .then(res => res.json())
+        .then(() => {
+          fileInput.value = '';
+          loadFiles();
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function loadFiles() {
+      fileList.innerHTML = '';
+      previewDiv.innerHTML = '';
+      if (!currentProjectId) return;
+      fetch(`/api/projects/${currentProjectId}/files`)
+        .then(res => res.json())
+        .then(files => {
+          files.forEach(f => {
+            const li = document.createElement('li');
+            li.textContent = f.filename + ' (v' + f.version + ') ';
+            const downloadBtn = document.createElement('button');
+            downloadBtn.textContent = 'Download';
+            downloadBtn.onclick = () => {
+              window.open(`/api/files/${f.id}`);
+            };
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.onclick = () => {
+              fetch(`/api/files/${f.id}`, { method: 'DELETE' })
+                .then(() => loadFiles());
+            };
+            li.appendChild(downloadBtn);
+            li.appendChild(deleteBtn);
+            li.addEventListener('click', () => {
+              previewFile(f);
+            });
+            fileList.appendChild(li);
+          });
+        });
+    }
+
+    function previewFile(file) {
+      previewDiv.innerHTML = '';
+      const ext = file.filename.split('.').pop().toLowerCase();
+      if (['png','jpg','jpeg','gif'].includes(ext)) {
+        const img = document.createElement('img');
+        img.src = `/api/files/${file.id}`;
+        previewDiv.appendChild(img);
+      } else if (ext === 'pdf' || ext === 'dxf') {
+        const iframe = document.createElement('iframe');
+        iframe.src = `/api/files/${file.id}`;
+        iframe.style.width = '100%';
+        iframe.style.height = '500px';
+        previewDiv.appendChild(iframe);
+      } else if (['step','stp','sldprt'].includes(ext)) {
+        const p = document.createElement('p');
+        p.textContent = '3D preview not implemented yet. Download file to view.';
+        previewDiv.appendChild(p);
+      } else {
+        const p = document.createElement('p');
+        p.textContent = 'Preview not available.';
+        previewDiv.appendChild(p);
       }
-      h1 {
-        color: #333;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>Hello, EPIC Hub!</h1>
-  </body>
+    }
+
+    loadProjects();
+  </script>
+</body>
 </html>
