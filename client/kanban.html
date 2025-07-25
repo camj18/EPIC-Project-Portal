@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>EPIC Hub - Kanban Board</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f7f7f7; }
+    #controls { margin-bottom: 20px; }
+    #board { display: flex; gap: 10px; overflow-x: auto; }
+    .column { flex: 1; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; min-width: 200px; }
+    .column h3 { margin-top: 0; font-size: 1.1em; }
+    .task { margin-bottom: 8px; padding: 8px; background: #e5e5e5; border-radius: 4px; cursor: grab; }
+    .task.dragging { opacity: 0.5; }
+    .task-container { min-height: 50px; }
+    .column .task-container.drag-over { background: #f0f8ff; }
+    label { margin-right: 8px; }
+    input, select { padding: 4px 6px; margin-right: 6px; }
+    button { padding: 6px 10px; }
+  </style>
+</head>
+<body>
+  <h1>Kanban Board</h1>
+
+  <div id="controls">
+    <label for="projectSelect">Project:</label>
+    <select id="projectSelect"></select>
+    <label for="taskTitle">Title:</label>
+    <input id="taskTitle" placeholder="Task title"/>
+    <label for="taskDueDate">Due:</label>
+    <input id="taskDueDate" type="date"/>
+    <button onclick="createTask()">Add Task</button>
+  </div>
+
+  <div id="board"></div>
+
+<script>
+const statuses = ['Backlog','To Do','In Progress','Review','Done'];
+
+async function fetchProjects() {
+  const res = await fetch('/api/projects');
+  return res.json();
+}
+
+async function fetchTasks(projectId) {
+  const res = await fetch('/api/projects/' + projectId + '/tasks');
+  return res.json();
+}
+
+async function createTask() {
+  const projectId = document.getElementById('projectSelect').value;
+  const titleInput = document.getElementById('taskTitle');
+  const dueInput = document.getElementById('taskDueDate');
+  const title = titleInput.value.trim();
+  if (!projectId) { alert('Select a project'); return; }
+  if (!title) { alert('Enter title'); return; }
+  const body = {
+    title: title,
+    description: '',
+    status: 'Backlog',
+    assignees: [],
+    due_date: dueInput.value || null,
+    labels: []
+  };
+  await fetch('/api/projects/' + projectId + '/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  titleInput.value = '';
+  dueInput.value = '';
+  loadTasks();
+}
+
+async function updateTaskStatus(taskId, status) {
+  await fetch('/api/tasks/' + taskId, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
+}
+
+function renderBoard(tasks) {
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  statuses.forEach(status => {
+    const col = document.createElement('div');
+    col.className = 'column';
+    col.dataset.status = status;
+    const h3 = document.createElement('h3');
+    h3.textContent = status;
+    const container = document.createElement('div');
+    container.className = 'task-container';
+    container.addEventListener('dragover', e => { e.preventDefault(); container.classList.add('drag-over'); });
+    container.addEventListener('dragleave', e => { container.classList.remove('drag-over'); });
+    container.addEventListener('drop', async e => {
+      e.preventDefault();
+      container.classList.remove('drag-over');
+      const taskId = e.dataTransfer.getData('text/plain');
+      await updateTaskStatus(taskId, status);
+      loadTasks();
+    });
+    const colTasks = tasks.filter(t => t.status === status);
+    colTasks.forEach(task => {
+      const div = document.createElement('div');
+      div.className = 'task';
+      div.draggable = true;
+      div.textContent = task.title + (task.due_date ? (' (Due: ' + task.due_date.split('T')[0] + ')') : '');
+      div.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', task.id);
+        div.classList.add('dragging');
+      });
+      div.addEventListener('dragend', e => {
+        div.classList.remove('dragging');
+      });
+      container.appendChild(div);
+    });
+    col.appendChild(h3);
+    col.appendChild(container);
+    board.appendChild(col);
+  });
+}
+
+async function populateProjects() {
+  const select = document.getElementById('projectSelect');
+  const projects = await fetchProjects();
+  select.innerHTML = '<option value="">Select project</option>';
+  projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    select.appendChild(opt);
+  });
+  select.addEventListener('change', () => loadTasks());
+}
+
+async function loadTasks() {
+  const projectId = document.getElementById('projectSelect').value;
+  if (!projectId) { document.getElementById('board').innerHTML = ''; return; }
+  const tasks = await fetchTasks(projectId);
+  renderBoard(tasks);
+}
+
+populateProjects();
+</script>
+</body>
+</html>
