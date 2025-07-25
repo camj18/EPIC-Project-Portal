@@ -2,8 +2,8 @@
   "name": "epic-server",
   "version": "0.1.0",
   "private": true,
-  "main": "index.js",
+  "main": "api.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node api.js"
   }
 }
